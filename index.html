@@ -102,6 +102,12 @@ footer .om{font-size:1rem;margin:0;display:inline;color:var(--accent)}
 .ios-help{max-width:520px;margin:-10px auto 26px;padding:14px 16px;background:var(--card);border:1px solid var(--accent);border-radius:14px;text-align:left;font-size:.93rem}
 .ios-help[hidden],.pill[hidden]{display:none}
 .ios-help button{margin-top:8px}
+
+.recording-card.is-heard{border-color:#6a9a5b;background:#f6fbf3}
+.recording-card.is-heard h3:before{content:"✓ ";color:#3f7d33}
+.card-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.heard-btn{cursor:pointer;font:inherit}
+.is-heard .heard-btn{background:#e4f1de;border-color:#6a9a5b;color:#2f6a24}
 </style>
 </head>
 <body>
@@ -213,7 +219,11 @@ async function download(f,btn){
   btn.textContent=old;btn.disabled=false;
 }
 
-function card(f){
+/* remembers which notes this person has heard (saved on their own device) */
+let heard={};try{heard=JSON.parse(localStorage.getItem('tv_heard')||'{}');}catch(e){}
+const saveHeard=()=>{try{localStorage.setItem('tv_heard',JSON.stringify(heard));}catch(e){}};
+
+function card(f,onChange){
   const c=el('article','recording-card');
   c.appendChild(el('h3',null,clean(f.name)));
   const mb=f.size?(f.size/1048576).toFixed(1)+' MB':'';
@@ -222,25 +232,37 @@ function card(f){
   const msg=el('p','status','');
   a.addEventListener('error',()=>{msg.textContent='This file could not be played here. Try Download instead.';});
   c.appendChild(a);c.appendChild(msg);
-  const b=el('button','playlist-link','⬇ Download');b.type='button';b.style.marginTop='10px';
-  b.addEventListener('click',()=>download(f,b));c.appendChild(b);
+  const row=el('div','card-actions');
+  const b=el('button','playlist-link','⬇ Download');b.type='button';
+  b.addEventListener('click',()=>download(f,b));row.appendChild(b);
+  const hb=el('button','playlist-link heard-btn','');hb.type='button';
+  function paint(){const h=!!heard[f.id];c.classList.toggle('is-heard',h);hb.textContent=h?'✓ Heard (tap to undo)':'Mark as heard';hb.setAttribute('aria-pressed',String(h));}
+  function setHeard(v){if(v)heard[f.id]=1;else delete heard[f.id];saveHeard();paint();if(onChange)onChange();}
+  hb.addEventListener('click',()=>setHeard(!heard[f.id]));
+  a.addEventListener('ended',()=>{if(!heard[f.id])setHeard(true);});
+  a.addEventListener('timeupdate',()=>{if(!heard[f.id]&&a.duration>0&&a.currentTime/a.duration>=0.9)setHeard(true);});
+  row.appendChild(hb);c.appendChild(row);paint();
   return c;
 }
 
 /* fills a box with the voice notes and sub-folders of a Drive folder (sub-folders load when opened) */
-async function fill(box,id){
+async function fill(box,id,onFiles,onChange){
   box.textContent='';box.appendChild(el('p','empty','Loading…'));
   let r;
   try{r=await listFolder(id);}catch(e){box.textContent='';box.appendChild(el('p','empty','Could not load this folder. '+e.message));return;}
   box.textContent='';
   if(!r.folders.length&&!r.files.length){box.appendChild(el('p','empty','Nothing here yet.'));return;}
-  if(r.files.length){const g=el('div','recording-grid');r.files.forEach(f=>g.appendChild(card(f)));box.appendChild(g);}
+  if(r.files.length){
+    if(onFiles)onFiles(r.files);
+    const g=el('div','recording-grid');r.files.forEach(f=>g.appendChild(card(f,onChange)));box.appendChild(g);
+  }
   r.folders.forEach(f=>box.appendChild(folderBox(f.name,f.id,'pl sub',false)));
 }
 function folderBox(title,id,cls,open){
-  const d=el('details',cls);d.appendChild(el('summary',null,title));
-  const inner=el('div');d.appendChild(inner);let done=false;
-  const go=()=>{if(!done){done=true;fill(inner,id);}};
+  const d=el('details',cls);const sum=el('summary',null,title);d.appendChild(sum);
+  const inner=el('div');d.appendChild(inner);let done=false,files=[];
+  const count=()=>{if(files.length)sum.textContent=title+' · '+files.filter(f=>heard[f.id]).length+'/'+files.length+' heard';};
+  const go=()=>{if(!done){done=true;fill(inner,id,fs=>{files=fs;count();},count);}};
   d.addEventListener('toggle',()=>{if(d.open)go();});
   if(open){d.open=true;go();}
   return d;
